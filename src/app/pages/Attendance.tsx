@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -11,7 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Textarea } from '../components/ui/textarea';
 import { Badge } from '../components/ui/badge';
 import { Checkbox } from '../components/ui/checkbox';
-import { ClipboardList, Plus } from 'lucide-react';
+import { ClipboardList, Plus, Download, Upload } from 'lucide-react';
+import { read, utils, writeFile } from 'xlsx';
+import { Attendance as AttendanceType } from '../context/DataContext';
 
 type AbsenceStatus = 'Alfa' | 'Izin';
 
@@ -22,10 +24,12 @@ interface StudentAbsence {
 }
 
 export function Attendance() {
-  const { students, courses, attendances, addAttendance } = useData();
+  const { students, courses, attendances, addAttendance, addAttendances } = useData();
   const { isAdmin } = useAuth();
   const [isAddingAttendance, setIsAddingAttendance] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState('all');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state untuk sesi absensi
   const [sessionForm, setSessionForm] = useState({
@@ -69,17 +73,19 @@ export function Attendance() {
     if (!sessionForm.course) return;
 
     // Simpan semua mahasiswa: yang tidak diceklis = Hadir
-    students.forEach(student => {
+    const attendanceData = students.map(student => {
       const absence = absences[student.id];
-      addAttendance({
+      return {
         studentId: student.id,
         date: sessionForm.date,
         course: sessionForm.course,
         meeting: sessionForm.meeting,
-        status: absence ? absence.status : 'Hadir',
+        status: (absence ? absence.status : 'Hadir') as 'Hadir' | 'Alfa' | 'Izin',
         note: absence ? absence.note : '',
-      });
+      };
     });
+
+    addAttendances(attendanceData);
 
     // Reset
     setAbsences({});
@@ -89,6 +95,80 @@ export function Attendance() {
       meeting: 1,
     });
     setIsAddingAttendance(false);
+  };
+
+  // ── EXCEL LOGIC ────────────────────────────────────────────────
+  const handleDownloadTemplate = () => {
+    const templateData = students.map(s => ({
+      "Nama": s.name,
+      "NIM": s.nim,
+      "Status (Hadir/Alfa/Izin)": "Hadir",
+      "Keterangan": "",
+      "Mata Kuliah": sessionForm.course || courses[0],
+      "Tanggal (YYYY-MM-DD)": sessionForm.date,
+      "Pertemuan Ke-": sessionForm.meeting
+    }));
+
+    const ws = utils.json_to_sheet(templateData);
+    ws['!cols'] = [
+      { wch: 30 }, { wch: 15 }, { wch: 20 }, 
+      { wch: 20 }, { wch: 30 }, { wch: 20 }, { wch: 15 }
+    ];
+
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, "Template Absensi");
+    writeFile(wb, `Template_Absensi_${sessionForm.course || 'Kelas'}.xlsx`);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const rawData = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const wb = read(rawData, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = utils.sheet_to_json<any>(ws);
+
+        const attendancesToAdd: Omit<AttendanceType, 'id'>[] = [];
+
+        data.forEach(row => {
+          // Cari mahasiswa berdasarkan nama atau NIM
+          const student = students.find(s => 
+            s.name.toLowerCase() === row["Nama"]?.toString().toLowerCase() || 
+            s.nim === row["NIM"]?.toString()
+          );
+
+          if (student) {
+            attendancesToAdd.push({
+              studentId: student.id,
+              date: row["Tanggal (YYYY-MM-DD)"]?.toString() || sessionForm.date,
+              course: row["Mata Kuliah"]?.toString() || sessionForm.course || courses[0],
+              meeting: parseInt(row["Pertemuan Ke-"]) || sessionForm.meeting,
+              status: (row["Status (Hadir/Alfa/Izin)"]?.toString() || "Hadir") as any,
+              note: row["Keterangan"]?.toString() || ""
+            });
+          }
+        });
+
+        if (attendancesToAdd.length > 0) {
+          await addAttendances(attendancesToAdd);
+          alert(`Berhasil mengimpor ${attendancesToAdd.length} data absensi!`);
+        } else {
+          alert('Data mahasiswa tidak ditemukan atau format salah.');
+        }
+      } catch (error) {
+        console.error(error);
+        alert('Gagal membaca file Excel.');
+      } finally {
+        setIsUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsArrayBuffer(file);
   };
 
   const getStudentName = (studentId: string) => {
@@ -123,146 +203,170 @@ export function Attendance() {
           <p className="text-muted-foreground">Rekap kehadiran mahasiswa PAI A2 23</p>
         </div>
         {isAdmin && (
-          <Dialog open={isAddingAttendance} onOpenChange={setIsAddingAttendance}>
-            <DialogTrigger asChild>
-              <Button className="bg-[#2D7A3E] hover:bg-[#1f5a2d]">
-                <Plus className="h-4 w-4 mr-2" />
-                Tambah Absensi
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Catat Absensi Pertemuan</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                {/* Info Sesi */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Mata Kuliah</Label>
-                    <Select
-                      value={sessionForm.course}
-                      onValueChange={(value) => setSessionForm({ ...sessionForm, course: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Pilih mata kuliah" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {courses.map((course) => (
-                          <SelectItem key={course} value={course}>{course}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleDownloadTemplate} className="hidden sm:flex hover:bg-green-50">
+              <Download className="mr-2 h-4 w-4 text-green-600" />
+              Template Excel
+            </Button>
+            
+            <input 
+              type="file" 
+              accept=".xlsx, .xls"
+              className="hidden" 
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+            />
+            <Button 
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()} 
+              disabled={isUploading}
+              className="hidden sm:flex"
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              Upload Excel
+            </Button>
+
+            <Dialog open={isAddingAttendance} onOpenChange={setIsAddingAttendance}>
+              <DialogTrigger asChild>
+                <Button className="bg-[#2D7A3E] hover:bg-[#1f5a2d]">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Tambah Absensi
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Catat Absensi Pertemuan</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  {/* Info Sesi */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label>Mata Kuliah</Label>
+                      <Select
+                        value={sessionForm.course}
+                        onValueChange={(value) => setSessionForm({ ...sessionForm, course: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Pilih mata kuliah" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {courses.map((course) => (
+                            <SelectItem key={course} value={course}>{course}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Pertemuan Ke-</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        value={sessionForm.meeting}
+                        onChange={(e) => setSessionForm({ ...sessionForm, meeting: parseInt(e.target.value) })}
+                      />
+                    </div>
                   </div>
                   <div>
-                    <Label>Pertemuan Ke-</Label>
+                    <Label>Tanggal</Label>
                     <Input
-                      type="number"
-                      min="1"
-                      value={sessionForm.meeting}
-                      onChange={(e) => setSessionForm({ ...sessionForm, meeting: parseInt(e.target.value) })}
+                      type="date"
+                      value={sessionForm.date}
+                      onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })}
                     />
                   </div>
-                </div>
-                <div>
-                  <Label>Tanggal</Label>
-                  <Input
-                    type="date"
-                    value={sessionForm.date}
-                    onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })}
-                  />
-                </div>
 
-                {/* Keterangan */}
-                <div className="bg-muted/50 rounded-lg p-3 text-sm text-muted-foreground">
-                  Centang mahasiswa yang <strong>tidak hadir</strong>. Mahasiswa yang tidak dicentang otomatis tercatat <strong>Hadir</strong>.
-                </div>
+                  {/* Keterangan */}
+                  <div className="bg-muted/50 rounded-lg p-3 text-sm text-muted-foreground">
+                    Centang mahasiswa yang <strong>tidak hadir</strong>. Mahasiswa yang tidak dicentang otomatis tercatat <strong>Hadir</strong>.
+                  </div>
 
-                {/* Counter */}
-                <div className="flex gap-4 text-sm">
-                  <span className="text-green-600 font-medium">✓ Hadir: {presentCount}</span>
-                  <span className="text-red-600 font-medium">✗ Tidak hadir: {absentCount}</span>
-                </div>
+                  {/* Counter */}
+                  <div className="flex gap-4 text-sm">
+                    <span className="text-green-600 font-medium">✓ Hadir: {presentCount}</span>
+                    <span className="text-red-600 font-medium">✗ Tidak hadir: {absentCount}</span>
+                  </div>
 
-                {/* Daftar Mahasiswa */}
-                <div className="border rounded-lg divide-y max-h-80 overflow-y-auto">
-                  {students.map((student) => {
-                    const absence = absences[student.id];
-                    const isAbsent = !!absence;
-                    return (
-                      <div key={student.id} className={`p-3 space-y-2 ${isAbsent ? 'bg-red-50' : ''}`}>
-                        <div className="flex items-center gap-3">
-                          <Checkbox
-                            id={`absent-${student.id}`}
-                            checked={isAbsent}
-                            onCheckedChange={(checked) => handleToggleAbsence(student.id, !!checked)}
-                          />
-                          <label
-                            htmlFor={`absent-${student.id}`}
-                            className="flex-1 cursor-pointer text-sm font-medium"
-                          >
-                            {student.name}
-                            {student.nim && (
-                              <span className="text-muted-foreground font-normal ml-2">({student.nim})</span>
-                            )}
-                          </label>
-                          {!isAbsent && (
-                            <Badge className="bg-green-600 text-xs">Hadir</Badge>
-                          )}
-                        </div>
-
-                        {/* Jika dicentang, pilih Alfa atau Izin */}
-                        {isAbsent && (
-                          <div className="ml-7 space-y-2">
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleAbsenceStatus(student.id, 'Alfa')}
-                                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                                  absence.status === 'Alfa'
-                                    ? 'bg-red-600 text-white border-red-600'
-                                    : 'bg-white text-red-600 border-red-400 hover:bg-red-50'
-                                }`}
-                              >
-                                Alfa
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleAbsenceStatus(student.id, 'Izin')}
-                                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                                  absence.status === 'Izin'
-                                    ? 'bg-yellow-500 text-white border-yellow-500'
-                                    : 'bg-white text-yellow-600 border-yellow-400 hover:bg-yellow-50'
-                                }`}
-                              >
-                                Izin
-                              </button>
-                            </div>
-                            {absence.status === 'Izin' && (
-                              <Textarea
-                                placeholder="Keterangan izin..."
-                                value={absence.note}
-                                onChange={(e) => handleAbsenceNote(student.id, e.target.value)}
-                                rows={2}
-                                className="text-sm"
-                              />
+                  {/* Daftar Mahasiswa */}
+                  <div className="border rounded-lg divide-y max-h-80 overflow-y-auto">
+                    {students.map((student) => {
+                      const absence = absences[student.id];
+                      const isAbsent = !!absence;
+                      return (
+                        <div key={student.id} className={`p-3 space-y-2 ${isAbsent ? 'bg-red-50' : ''}`}>
+                          <div className="flex items-center gap-3">
+                            <Checkbox
+                              id={`absent-${student.id}`}
+                              checked={isAbsent}
+                              onCheckedChange={(checked) => handleToggleAbsence(student.id, !!checked)}
+                            />
+                            <label
+                              htmlFor={`absent-${student.id}`}
+                              className="flex-1 cursor-pointer text-sm font-medium"
+                            >
+                              {student.name}
+                              {student.nim && (
+                                <span className="text-muted-foreground font-normal ml-2">({student.nim})</span>
+                              )}
+                            </label>
+                            {!isAbsent && (
+                              <Badge className="bg-green-600 text-xs">Hadir</Badge>
                             )}
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
 
-                <Button
-                  onClick={handleSaveAttendance}
-                  disabled={!sessionForm.course}
-                  className="w-full bg-[#2D7A3E] hover:bg-[#1f5a2d]"
-                >
-                  Simpan Absensi ({students.length} mahasiswa)
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+                          {/* Jika dicentang, pilih Alfa atau Izin */}
+                          {isAbsent && (
+                            <div className="ml-7 space-y-2">
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleAbsenceStatus(student.id, 'Alfa')}
+                                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                    absence.status === 'Alfa'
+                                      ? 'bg-red-600 text-white border-red-600'
+                                      : 'bg-white text-red-600 border-red-400 hover:bg-red-50'
+                                  }`}
+                                >
+                                  Alfa
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAbsenceStatus(student.id, 'Izin')}
+                                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                    absence.status === 'Izin'
+                                      ? 'bg-yellow-500 text-white border-yellow-500'
+                                      : 'bg-white text-yellow-600 border-yellow-400 hover:bg-yellow-50'
+                                  }`}
+                                >
+                                  Izin
+                                </button>
+                              </div>
+                              {absence.status === 'Izin' && (
+                                <Textarea
+                                  placeholder="Keterangan izin..."
+                                  value={absence.note}
+                                  onChange={(e) => handleAbsenceNote(student.id, e.target.value)}
+                                  rows={2}
+                                  className="text-sm"
+                                />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <Button
+                    onClick={handleSaveAttendance}
+                    disabled={!sessionForm.course}
+                    className="w-full bg-[#2D7A3E] hover:bg-[#1f5a2d]"
+                  >
+                    Simpan Absensi ({students.length} mahasiswa)
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
         )}
       </div>
 

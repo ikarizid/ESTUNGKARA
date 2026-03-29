@@ -90,6 +90,7 @@ interface DataContextType {
   updateJournal: (id: string, journal: Partial<Journal>) => Promise<void>;
   deleteJournal: (id: string) => Promise<void>;
   addSchedule: (schedule: Omit<Schedule, 'id'>) => Promise<void>;
+  addSchedules: (schedules: Omit<Schedule, 'id'>[]) => Promise<void>;
   updateSchedule: (id: string, schedule: Partial<Schedule>) => Promise<void>;
   deleteSchedule: (id: string) => Promise<void>;
   addPresentations: (presentations: Omit<Presentation, 'id'>[]) => Promise<void>;
@@ -97,6 +98,7 @@ interface DataContextType {
   deletePresentation: (id: string) => Promise<void>;
   deletePresentations: (ids: string[]) => Promise<void>;
   addAttendance: (attendance: Omit<Attendance, 'id'>) => Promise<void>;
+  addAttendances: (attendances: Omit<Attendance, 'id'>[]) => Promise<void>;
   updateAttendance: (id: string, attendance: Partial<Attendance>) => Promise<void>;
   addAssignment: (assignment: Omit<Assignment, 'id'>, file?: File) => Promise<void>;
   deleteAssignment: (id: string) => Promise<void>;
@@ -273,6 +275,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     if (!error && row) setSchedules(prev => [...prev, row]);
   };
 
+  const addSchedules = async (data: Omit<Schedule, 'id'>[]) => {
+    const { data: rows, error } = await supabase.from('schedules').insert(data).select();
+    if (!error && rows) setSchedules(prev => [...prev, ...rows]);
+  };
+
   const updateSchedule = async (id: string, data: Partial<Schedule>) => {
     const { data: row, error } = await supabase.from('schedules').update(data).eq('id', id).select().single();
     if (!error && row) setSchedules(prev => prev.map(s => s.id === id ? row : s));
@@ -316,6 +323,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     delete (payload as any).studentId;
     const { data: row, error } = await supabase.from('attendances').insert(payload).select().single();
     if (!error && row) setAttendances(prev => [{ ...row, studentId: row.student_id }, ...prev]);
+  };
+
+  const addAttendances = async (data: Omit<Attendance, 'id'>[]) => {
+    const payload = data.map(item => {
+      const p = { ...item, student_id: item.studentId };
+      delete (p as any).studentId;
+      return p;
+    });
+    const { data: rows, error } = await supabase.from('attendances').insert(payload).select();
+    if (!error && rows) {
+      setAttendances(prev => [...(rows.map((row: any) => ({ ...row, studentId: row.student_id }))), ...prev]);
+    }
   };
 
   const updateAttendance = async (id: string, data: Partial<Attendance>) => {
@@ -371,6 +390,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       updateJournal,
       deleteJournal,
       addSchedule,
+      addSchedules,
       updateSchedule,
       deleteSchedule,
       addPresentations,
@@ -378,6 +398,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       deletePresentation,
       deletePresentations,
       addAttendance,
+      addAttendances,
       updateAttendance,
       addAssignment,
       deleteAssignment,

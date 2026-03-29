@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -8,13 +8,18 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
-import { Calendar, Plus, Trash2, Edit } from 'lucide-react';
+import { Calendar, Plus, Trash2, Download, Upload } from 'lucide-react';
+import { read, utils, writeFile } from 'xlsx';
+import { Schedule as ScheduleType } from '../context/DataContext';
 
 export function Schedule() {
-  const { schedules, addSchedule, deleteSchedule } = useData();
+  const { schedules, addSchedule, addSchedules, deleteSchedule } = useData();
   const { isAdmin } = useAuth();
   const [isAddingSchedule, setIsAddingSchedule] = useState(false);
   const [selectedSemester, setSelectedSemester] = useState('Genap 2025/2026');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [newSchedule, setNewSchedule] = useState({
     day: '',
     course: '',
@@ -42,6 +47,64 @@ export function Schedule() {
     }
   };
 
+  // ── EXCEL LOGIC ────────────────────────────────────────────────
+  const handleDownloadTemplate = () => {
+    const templateData = [{
+      "Hari": "Senin",
+      "Mata Kuliah": "Contoh Mata Kuliah",
+      "Dosen": "Nama Dosen",
+      "Jam": "08:00 - 10:00",
+      "Ruangan": "Ruang 301",
+      "Semester": "Genap 2025/2026"
+    }];
+
+    const ws = utils.json_to_sheet(templateData);
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, "Template Jadwal");
+    writeFile(wb, "Template_Jadwal_Kuliah.xlsx");
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const rawData = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const wb = read(rawData, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = utils.sheet_to_json<any>(ws);
+
+        const schedulesToAdd: Omit<ScheduleType, 'id'>[] = data.map(row => ({
+          day: row["Hari"]?.toString() || "",
+          course: row["Mata Kuliah"]?.toString() || "",
+          lecturer: row["Dosen"]?.toString() || "",
+          time: row["Jam"]?.toString() || "",
+          room: row["Ruangan"]?.toString() || "",
+          semester: row["Semester"]?.toString() || selectedSemester
+        }));
+
+        const validSchedules = schedulesToAdd.filter(s => s.day && s.course && s.lecturer);
+
+        if (validSchedules.length > 0) {
+          await addSchedules(validSchedules);
+          alert(`Berhasil mengimpor ${validSchedules.length} jadwal kuliah!`);
+        } else {
+          alert('Format data tidak sesuai.');
+        }
+      } catch (error) {
+        console.error(error);
+        alert('Gagal membaca file Excel.');
+      } finally {
+        setIsUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   const filteredSchedules = schedules.filter(s => s.semester === selectedSemester);
 
   return (
@@ -53,92 +116,116 @@ export function Schedule() {
           <p className="text-muted-foreground">Jadwal perkuliahan Kelas PAI A2 23</p>
         </div>
         {isAdmin && (
-          <Dialog open={isAddingSchedule} onOpenChange={setIsAddingSchedule}>
-            <DialogTrigger asChild>
-              <Button className="bg-[#2D7A3E] hover:bg-[#1f5a2d]">
-                <Plus className="h-4 w-4 mr-2" />
-                Tambah Jadwal
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Tambah Jadwal Baru</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <Label>Hari</Label>
-                  <Select
-                    value={newSchedule.day}
-                    onValueChange={(value) => setNewSchedule({ ...newSchedule, day: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Pilih hari" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {days.map((day) => (
-                        <SelectItem key={day} value={day}>
-                          {day}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Mata Kuliah</Label>
-                  <Input
-                    value={newSchedule.course}
-                    onChange={(e) => setNewSchedule({ ...newSchedule, course: e.target.value })}
-                    placeholder="Nama mata kuliah"
-                  />
-                </div>
-                <div>
-                  <Label>Dosen</Label>
-                  <Input
-                    value={newSchedule.lecturer}
-                    onChange={(e) => setNewSchedule({ ...newSchedule, lecturer: e.target.value })}
-                    placeholder="Nama dosen pengampu"
-                  />
-                </div>
-                <div>
-                  <Label>Jam</Label>
-                  <Input
-                    value={newSchedule.time}
-                    onChange={(e) => setNewSchedule({ ...newSchedule, time: e.target.value })}
-                    placeholder="Contoh: 08:00 - 10:00"
-                  />
-                </div>
-                <div>
-                  <Label>Ruangan</Label>
-                  <Input
-                    value={newSchedule.room}
-                    onChange={(e) => setNewSchedule({ ...newSchedule, room: e.target.value })}
-                    placeholder="Contoh: Ruang 301"
-                  />
-                </div>
-                <div>
-                  <Label>Semester</Label>
-                  <Select
-                    value={newSchedule.semester}
-                    onValueChange={(value) => setNewSchedule({ ...newSchedule, semester: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {semesters.map((sem) => (
-                        <SelectItem key={sem} value={sem}>
-                          {sem}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button onClick={handleAddSchedule} className="w-full bg-[#2D7A3E] hover:bg-[#1f5a2d]">
-                  Simpan Jadwal
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleDownloadTemplate} className="hidden sm:flex hover:bg-green-50">
+              <Download className="mr-2 h-4 w-4 text-green-600" />
+              Template Excel
+            </Button>
+            
+            <input 
+              type="file" 
+              accept=".xlsx, .xls"
+              className="hidden" 
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+            />
+            <Button 
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()} 
+              disabled={isUploading}
+              className="hidden sm:flex"
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              Upload Excel
+            </Button>
+
+            <Dialog open={isAddingSchedule} onOpenChange={setIsAddingSchedule}>
+              <DialogTrigger asChild>
+                <Button className="bg-[#2D7A3E] hover:bg-[#1f5a2d]">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Tambah Jadwal
                 </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Tambah Jadwal Baru</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label>Hari</Label>
+                    <Select
+                      value={newSchedule.day}
+                      onValueChange={(value) => setNewSchedule({ ...newSchedule, day: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih hari" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {days.map((day) => (
+                          <SelectItem key={day} value={day}>
+                            {day}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Mata Kuliah</Label>
+                    <Input
+                      value={newSchedule.course}
+                      onChange={(e) => setNewSchedule({ ...newSchedule, course: e.target.value })}
+                      placeholder="Nama mata kuliah"
+                    />
+                  </div>
+                  <div>
+                    <Label>Dosen</Label>
+                    <Input
+                      value={newSchedule.lecturer}
+                      onChange={(e) => setNewSchedule({ ...newSchedule, lecturer: e.target.value })}
+                      placeholder="Nama dosen pengampu"
+                    />
+                  </div>
+                  <div>
+                    <Label>Jam</Label>
+                    <Input
+                      value={newSchedule.time}
+                      onChange={(e) => setNewSchedule({ ...newSchedule, time: e.target.value })}
+                      placeholder="Contoh: 08:00 - 10:00"
+                    />
+                  </div>
+                  <div>
+                    <Label>Ruangan</Label>
+                    <Input
+                      value={newSchedule.room}
+                      onChange={(e) => setNewSchedule({ ...newSchedule, room: e.target.value })}
+                      placeholder="Contoh: Ruang 301"
+                    />
+                  </div>
+                  <div>
+                    <Label>Semester</Label>
+                    <Select
+                      value={newSchedule.semester}
+                      onValueChange={(value) => setNewSchedule({ ...newSchedule, semester: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {semesters.map((sem) => (
+                          <SelectItem key={sem} value={sem}>
+                            {sem}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button onClick={handleAddSchedule} className="w-full bg-[#2D7A3E] hover:bg-[#1f5a2d]">
+                    Simpan Jadwal
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
         )}
       </div>
 
