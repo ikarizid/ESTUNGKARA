@@ -210,6 +210,11 @@ DTSTART:${tplDate}
 DTEND:${tplEndDate}
 SUMMARY:Presentasi ${presentation.course} - ${presentation.groupName}
 DESCRIPTION:Anggota Kelompok:\\n${presentation.members.join('\\n')}
+BEGIN:VALARM
+TRIGGER:-PT30M
+ACTION:DISPLAY
+DESCRIPTION:Pengingat Presentasi: ${presentation.course}
+END:VALARM
 END:VEVENT
 END:VCALENDAR`;
 
