@@ -8,6 +8,7 @@ import { Presentation } from './pages/Presentation';
 import { Attendance } from './pages/Attendance';
 import { Assignment } from './pages/Assignment';
 import { Login } from './pages/Login';
+import { AttendanceReport } from './pages/AttendanceReport';
 
 export const router = createBrowserRouter([
   {
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
       { path: 'absensi', Component: Attendance },
       { path: 'tugas', Component: Assignment },
       { path: 'login', Component: Login },
+      { path: 'rekap', Component: AttendanceReport },
     ],
   },
 ]);

@@ -92,7 +92,9 @@ interface DataContextType {
   addSchedule: (schedule: Omit<Schedule, 'id'>) => Promise<void>;
   updateSchedule: (id: string, schedule: Partial<Schedule>) => Promise<void>;
   deleteSchedule: (id: string) => Promise<void>;
+  addPresentations: (presentations: Omit<Presentation, 'id'>[]) => Promise<void>;
   updatePresentation: (id: string, presentation: Partial<Presentation>) => Promise<void>;
+  deletePresentation: (id: string) => Promise<void>;
   addAttendance: (attendance: Omit<Attendance, 'id'>) => Promise<void>;
   updateAttendance: (id: string, attendance: Partial<Attendance>) => Promise<void>;
   addAssignment: (assignment: Omit<Assignment, 'id'>, file?: File) => Promise<void>;
@@ -108,6 +110,33 @@ export const COURSES = [
   'Sejarah Peradaban Islam',
   'Al-Quran Hadits',
   'Bahasa Arab',
+];
+
+// ── Fallback data mahasiswa (dipakai jika Supabase kosong) ──────────────────
+const FALLBACK_STUDENTS: Student[] = [
+  { id: '1',  name: 'Syifa Fatimah Azzahra',            nim: '23862081030' },
+  { id: '2',  name: 'Riyadlatul Ummah',                  nim: '23862081035' },
+  { id: '3',  name: 'Feri Afandi',                       nim: '23862081037' },
+  { id: '4',  name: 'Muhamad Fakhrur Rozzi',             nim: '23862081038' },
+  { id: '5',  name: 'Karimatul Aziza',                   nim: '23862081039' },
+  { id: '6',  name: 'A. Baihaqi Al Farizi',              nim: '23862081040' },
+  { id: '7',  name: 'Ahmad Zaroby',                      nim: '23862081043' },
+  { id: '8',  name: 'Risma Eka Lusida',                  nim: '23862081044' },
+  { id: '9',  name: 'Mochamad Fakhridzal Aidi Irchamni', nim: '23862081045' },
+  { id: '10', name: 'Najib Azhar Muaffaq',               nim: '23862081046' },
+  { id: '11', name: 'Masruroh',                          nim: '23862081047' },
+  { id: '12', name: 'Lailatul Mubarokah',                nim: '23862081048' },
+  { id: '13', name: 'Adel Adi Aqsa Syachira',            nim: '23862081049' },
+  { id: '14', name: 'Naswa Cahya Mutiara',               nim: '23862081051' },
+  { id: '15', name: "Khuril 'Aini",                      nim: '23862081052' },
+  { id: '16', name: 'Laila',                             nim: '23862081053' },
+  { id: '17', name: 'Ikrima Warda Lestari',              nim: '23862081056' },
+  { id: '18', name: 'Nurul Hidayah',                     nim: '23862081057' },
+  { id: '19', name: 'Muhammad Wildan Rizqy',             nim: '23862081058' },
+  { id: '20', name: 'Tri Ratna Mila',                    nim: '23862081059' },
+  { id: '21', name: 'Yulia Nur Kholifah',                nim: '23862081060' },
+  { id: '22', name: 'Prila Listya Apsari',               nim: '23862081061' },
+  { id: '23', name: 'Malik Al-Azis',                     nim: '23862081063' },
 ];
 
 // Helper: upload file ke Supabase Storage
@@ -133,7 +162,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [journals, setJournals] = useState<Journal[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [presentations, setPresentations] = useState<Presentation[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
+  const [students, setStudents] = useState<Student[]>(FALLBACK_STUDENTS);
   const [attendances, setAttendances] = useState<Attendance[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -167,7 +196,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       setJournals(jou ?? []);
       setSchedules(sch ?? []);
       setPresentations(pre ?? []);
-      setStudents(stu ?? []);
+      // Pakai data Supabase jika ada, fallback ke hardcode jika kosong
+      setStudents(stu && stu.length > 0 ? stu : FALLBACK_STUDENTS);
       setAttendances((att ?? []).map((a: any) => ({
         ...a,
         studentId: a.student_id,
@@ -209,7 +239,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
   const deletePhoto = async (id: string, url: string) => {
     await supabase.from('photos').delete().eq('id', id);
-    // Hapus file dari storage jika URL dari Supabase
     if (url.includes('supabase')) await deleteFile('photos', url);
     setPhotos(prev => prev.filter(p => p.id !== id));
   };
@@ -254,9 +283,25 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   };
 
   // ── PRESENTATIONS ──────────────────────────────────────────────
+  const addPresentations = async (data: Omit<Presentation, 'id'>[]) => {
+    // Supabase insert array of objects
+    const { data: rows, error } = await supabase.from('presentations').insert(data).select();
+    if (!error && rows) {
+      setPresentations(prev => {
+        const sorted = [...prev, ...rows].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        return sorted;
+      });
+    }
+  };
+
   const updatePresentation = async (id: string, data: Partial<Presentation>) => {
     const { data: row, error } = await supabase.from('presentations').update(data).eq('id', id).select().single();
     if (!error && row) setPresentations(prev => prev.map(p => p.id === id ? row : p));
+  };
+
+  const deletePresentation = async (id: string) => {
+    await supabase.from('presentations').delete().eq('id', id);
+    setPresentations(prev => prev.filter(p => p.id !== id));
   };
 
   // ── ATTENDANCES ────────────────────────────────────────────────
@@ -322,7 +367,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       addSchedule,
       updateSchedule,
       deleteSchedule,
+      addPresentations,
       updatePresentation,
+      deletePresentation,
       addAttendance,
       updateAttendance,
       addAssignment,

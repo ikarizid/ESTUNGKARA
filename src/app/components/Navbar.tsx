@@ -16,6 +16,7 @@ export function Navbar() {
     { name: 'Jadwal Kuliah', path: '/jadwal' },
     { name: 'Presentasi', path: '/presentasi' },
     { name: 'Absensi', path: '/absensi' },
+    { name: 'Rekap', path: '/rekap' },
     { name: 'Tugas', path: '/tugas' },
   ];
 

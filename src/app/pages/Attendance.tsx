@@ -10,60 +10,109 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Textarea } from '../components/ui/textarea';
 import { Badge } from '../components/ui/badge';
-import { ClipboardList, Plus, Download } from 'lucide-react';
+import { Checkbox } from '../components/ui/checkbox';
+import { ClipboardList, Plus } from 'lucide-react';
+
+type AbsenceStatus = 'Alfa' | 'Izin';
+
+interface StudentAbsence {
+  checked: boolean;
+  status: AbsenceStatus;
+  note: string;
+}
 
 export function Attendance() {
   const { students, courses, attendances, addAttendance } = useData();
   const { isAdmin } = useAuth();
   const [isAddingAttendance, setIsAddingAttendance] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState('all');
-  const [newAttendance, setNewAttendance] = useState({
-    studentId: '',
+
+  // Form state untuk sesi absensi
+  const [sessionForm, setSessionForm] = useState({
     date: new Date().toISOString().split('T')[0],
     course: '',
     meeting: 1,
-    status: 'Hadir' as 'Hadir' | 'Alfa' | 'Izin',
-    note: '',
   });
 
-  const handleAddAttendance = () => {
-    if (newAttendance.studentId && newAttendance.course) {
-      addAttendance(newAttendance);
-      setNewAttendance({
-        studentId: '',
-        date: new Date().toISOString().split('T')[0],
-        course: '',
-        meeting: 1,
-        status: 'Hadir',
-        note: '',
+  // State checklist: key = studentId, value = { checked, status, note }
+  const [absences, setAbsences] = useState<Record<string, StudentAbsence>>({});
+
+  const handleToggleAbsence = (studentId: string, checked: boolean) => {
+    setAbsences(prev => {
+      if (!checked) {
+        const updated = { ...prev };
+        delete updated[studentId];
+        return updated;
+      }
+      return {
+        ...prev,
+        [studentId]: { checked: true, status: 'Alfa', note: '' },
+      };
+    });
+  };
+
+  const handleAbsenceStatus = (studentId: string, status: AbsenceStatus) => {
+    setAbsences(prev => ({
+      ...prev,
+      [studentId]: { ...prev[studentId], status },
+    }));
+  };
+
+  const handleAbsenceNote = (studentId: string, note: string) => {
+    setAbsences(prev => ({
+      ...prev,
+      [studentId]: { ...prev[studentId], note },
+    }));
+  };
+
+  const handleSaveAttendance = () => {
+    if (!sessionForm.course) return;
+
+    // Simpan semua mahasiswa: yang tidak diceklis = Hadir
+    students.forEach(student => {
+      const absence = absences[student.id];
+      addAttendance({
+        studentId: student.id,
+        date: sessionForm.date,
+        course: sessionForm.course,
+        meeting: sessionForm.meeting,
+        status: absence ? absence.status : 'Hadir',
+        note: absence ? absence.note : '',
       });
-      setIsAddingAttendance(false);
-    }
+    });
+
+    // Reset
+    setAbsences({});
+    setSessionForm({
+      date: new Date().toISOString().split('T')[0],
+      course: '',
+      meeting: 1,
+    });
+    setIsAddingAttendance(false);
   };
 
   const getStudentName = (studentId: string) => {
     return students.find(s => s.id === studentId)?.name || 'Unknown';
   };
 
-  // Group attendances by course and meeting
   const filteredAttendances = selectedCourse === 'all'
     ? attendances
     : attendances.filter(a => a.course === selectedCourse);
 
-  // Get summary statistics
   const getAttendanceSummary = () => {
     if (selectedCourse === 'all') return null;
-    
     const courseAttendances = attendances.filter(a => a.course === selectedCourse);
-    const totalRecords = courseAttendances.length;
-    const hadir = courseAttendances.filter(a => a.status === 'Hadir').length;
-    const alfa = courseAttendances.filter(a => a.status === 'Alfa').length;
-    const izin = courseAttendances.filter(a => a.status === 'Izin').length;
-
-    return { totalRecords, hadir, alfa, izin };
+    return {
+      totalRecords: courseAttendances.length,
+      hadir: courseAttendances.filter(a => a.status === 'Hadir').length,
+      alfa: courseAttendances.filter(a => a.status === 'Alfa').length,
+      izin: courseAttendances.filter(a => a.status === 'Izin').length,
+    };
   };
 
   const summary = getAttendanceSummary();
+  const absentCount = Object.keys(absences).length;
+  const presentCount = students.length - absentCount;
 
   return (
     <div className="space-y-6">
@@ -81,93 +130,135 @@ export function Attendance() {
                 Tambah Absensi
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>Catat Absensi</DialogTitle>
+                <DialogTitle>Catat Absensi Pertemuan</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
-                <div>
-                  <Label>Mahasiswa</Label>
-                  <Select
-                    value={newAttendance.studentId}
-                    onValueChange={(value) => setNewAttendance({ ...newAttendance, studentId: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Pilih mahasiswa" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {students.map((student) => (
-                        <SelectItem key={student.id} value={student.id}>
-                          {student.name} ({student.nim})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Mata Kuliah</Label>
-                  <Select
-                    value={newAttendance.course}
-                    onValueChange={(value) => setNewAttendance({ ...newAttendance, course: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Pilih mata kuliah" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {courses.map((course) => (
-                        <SelectItem key={course} value={course}>
-                          {course}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                {/* Info Sesi */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Mata Kuliah</Label>
+                    <Select
+                      value={sessionForm.course}
+                      onValueChange={(value) => setSessionForm({ ...sessionForm, course: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Pilih mata kuliah" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {courses.map((course) => (
+                          <SelectItem key={course} value={course}>{course}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Pertemuan Ke-</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      value={sessionForm.meeting}
+                      onChange={(e) => setSessionForm({ ...sessionForm, meeting: parseInt(e.target.value) })}
+                    />
+                  </div>
                 </div>
                 <div>
                   <Label>Tanggal</Label>
                   <Input
                     type="date"
-                    value={newAttendance.date}
-                    onChange={(e) => setNewAttendance({ ...newAttendance, date: e.target.value })}
+                    value={sessionForm.date}
+                    onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })}
                   />
                 </div>
-                <div>
-                  <Label>Pertemuan Ke-</Label>
-                  <Input
-                    type="number"
-                    min="1"
-                    value={newAttendance.meeting}
-                    onChange={(e) => setNewAttendance({ ...newAttendance, meeting: parseInt(e.target.value) })}
-                  />
+
+                {/* Keterangan */}
+                <div className="bg-muted/50 rounded-lg p-3 text-sm text-muted-foreground">
+                  Centang mahasiswa yang <strong>tidak hadir</strong>. Mahasiswa yang tidak dicentang otomatis tercatat <strong>Hadir</strong>.
                 </div>
-                <div>
-                  <Label>Status Kehadiran</Label>
-                  <Select
-                    value={newAttendance.status}
-                    onValueChange={(value: any) => setNewAttendance({ ...newAttendance, status: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Hadir">Hadir</SelectItem>
-                      <SelectItem value="Alfa">Alfa</SelectItem>
-                      <SelectItem value="Izin">Izin</SelectItem>
-                    </SelectContent>
-                  </Select>
+
+                {/* Counter */}
+                <div className="flex gap-4 text-sm">
+                  <span className="text-green-600 font-medium">✓ Hadir: {presentCount}</span>
+                  <span className="text-red-600 font-medium">✗ Tidak hadir: {absentCount}</span>
                 </div>
-                {newAttendance.status === 'Izin' && (
-                  <div>
-                    <Label>Keterangan</Label>
-                    <Textarea
-                      value={newAttendance.note}
-                      onChange={(e) => setNewAttendance({ ...newAttendance, note: e.target.value })}
-                      placeholder="Alasan izin..."
-                      rows={3}
-                    />
-                  </div>
-                )}
-                <Button onClick={handleAddAttendance} className="w-full bg-[#2D7A3E] hover:bg-[#1f5a2d]">
-                  Simpan Absensi
+
+                {/* Daftar Mahasiswa */}
+                <div className="border rounded-lg divide-y max-h-80 overflow-y-auto">
+                  {students.map((student) => {
+                    const absence = absences[student.id];
+                    const isAbsent = !!absence;
+                    return (
+                      <div key={student.id} className={`p-3 space-y-2 ${isAbsent ? 'bg-red-50' : ''}`}>
+                        <div className="flex items-center gap-3">
+                          <Checkbox
+                            id={`absent-${student.id}`}
+                            checked={isAbsent}
+                            onCheckedChange={(checked) => handleToggleAbsence(student.id, !!checked)}
+                          />
+                          <label
+                            htmlFor={`absent-${student.id}`}
+                            className="flex-1 cursor-pointer text-sm font-medium"
+                          >
+                            {student.name}
+                            {student.nim && (
+                              <span className="text-muted-foreground font-normal ml-2">({student.nim})</span>
+                            )}
+                          </label>
+                          {!isAbsent && (
+                            <Badge className="bg-green-600 text-xs">Hadir</Badge>
+                          )}
+                        </div>
+
+                        {/* Jika dicentang, pilih Alfa atau Izin */}
+                        {isAbsent && (
+                          <div className="ml-7 space-y-2">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleAbsenceStatus(student.id, 'Alfa')}
+                                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                  absence.status === 'Alfa'
+                                    ? 'bg-red-600 text-white border-red-600'
+                                    : 'bg-white text-red-600 border-red-400 hover:bg-red-50'
+                                }`}
+                              >
+                                Alfa
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleAbsenceStatus(student.id, 'Izin')}
+                                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                  absence.status === 'Izin'
+                                    ? 'bg-yellow-500 text-white border-yellow-500'
+                                    : 'bg-white text-yellow-600 border-yellow-400 hover:bg-yellow-50'
+                                }`}
+                              >
+                                Izin
+                              </button>
+                            </div>
+                            {absence.status === 'Izin' && (
+                              <Textarea
+                                placeholder="Keterangan izin..."
+                                value={absence.note}
+                                onChange={(e) => handleAbsenceNote(student.id, e.target.value)}
+                                rows={2}
+                                className="text-sm"
+                              />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <Button
+                  onClick={handleSaveAttendance}
+                  disabled={!sessionForm.course}
+                  className="w-full bg-[#2D7A3E] hover:bg-[#1f5a2d]"
+                >
+                  Simpan Absensi ({students.length} mahasiswa)
                 </Button>
               </div>
             </DialogContent>
@@ -187,9 +278,7 @@ export function Attendance() {
               <SelectContent>
                 <SelectItem value="all">Semua Mata Kuliah</SelectItem>
                 {courses.map((course) => (
-                  <SelectItem key={course} value={course}>
-                    {course}
-                  </SelectItem>
+                  <SelectItem key={course} value={course}>{course}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -230,20 +319,17 @@ export function Attendance() {
       {/* Attendance Table */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <ClipboardList className="h-5 w-5 text-[#2D7A3E]" />
-              Daftar Absensi
-            </CardTitle>
-          </div>
+          <CardTitle className="flex items-center gap-2">
+            <ClipboardList className="h-5 w-5 text-[#2D7A3E]" />
+            Daftar Absensi
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {filteredAttendances.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               {selectedCourse === 'all'
                 ? 'Belum ada data absensi'
-                : 'Belum ada data absensi untuk mata kuliah ini'
-              }
+                : 'Belum ada data absensi untuk mata kuliah ini'}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -267,27 +353,16 @@ export function Attendance() {
                       <TableCell>{attendance.course}</TableCell>
                       <TableCell>
                         {new Date(attendance.date).toLocaleDateString('id-ID', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric',
+                          day: 'numeric', month: 'short', year: 'numeric',
                         })}
                       </TableCell>
                       <TableCell>Pertemuan {attendance.meeting}</TableCell>
                       <TableCell>
                         <Badge
-                          variant={
-                            attendance.status === 'Hadir'
-                              ? 'default'
-                              : attendance.status === 'Alfa'
-                              ? 'destructive'
-                              : 'secondary'
-                          }
+                          variant={attendance.status === 'Hadir' ? 'default' : attendance.status === 'Alfa' ? 'destructive' : 'secondary'}
                           className={
-                            attendance.status === 'Hadir'
-                              ? 'bg-green-600'
-                              : attendance.status === 'Izin'
-                              ? 'bg-yellow-600'
-                              : ''
+                            attendance.status === 'Hadir' ? 'bg-green-600' :
+                            attendance.status === 'Izin' ? 'bg-yellow-600' : ''
                           }
                         >
                           {attendance.status}
