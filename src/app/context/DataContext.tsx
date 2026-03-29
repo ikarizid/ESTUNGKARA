@@ -95,6 +95,7 @@ interface DataContextType {
   addPresentations: (presentations: Omit<Presentation, 'id'>[]) => Promise<void>;
   updatePresentation: (id: string, presentation: Partial<Presentation>) => Promise<void>;
   deletePresentation: (id: string) => Promise<void>;
+  deletePresentations: (ids: string[]) => Promise<void>;
   addAttendance: (attendance: Omit<Attendance, 'id'>) => Promise<void>;
   updateAttendance: (id: string, attendance: Partial<Attendance>) => Promise<void>;
   addAssignment: (assignment: Omit<Assignment, 'id'>, file?: File) => Promise<void>;
@@ -304,6 +305,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setPresentations(prev => prev.filter(p => p.id !== id));
   };
 
+  const deletePresentations = async (ids: string[]) => {
+    await supabase.from('presentations').delete().in('id', ids);
+    setPresentations(prev => prev.filter(p => !ids.includes(p.id)));
+  };
+
   // ── ATTENDANCES ────────────────────────────────────────────────
   const addAttendance = async (data: Omit<Attendance, 'id'>) => {
     const payload = { ...data, student_id: data.studentId };
@@ -370,6 +376,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       addPresentations,
       updatePresentation,
       deletePresentation,
+      deletePresentations,
       addAttendance,
       updateAttendance,
       addAssignment,

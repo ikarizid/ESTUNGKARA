@@ -5,18 +5,28 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Badge } from '../components/ui/badge';
-import { Users, CheckCircle2, XCircle, Download, Upload, CalendarPlus, Trash2 } from 'lucide-react';
+import { Users, CheckCircle2, XCircle, Download, Upload, CalendarPlus, Trash2, CheckSquare } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Checkbox } from '../components/ui/checkbox';
 import { read, utils, writeFile } from 'xlsx';
 import { Presentation as PresentationType } from '../context/DataContext';
 
 export function Presentation() {
-  const { presentations, updatePresentation, addPresentations, deletePresentation, courses } = useData();
+  const { presentations, updatePresentation, addPresentations, deletePresentation, deletePresentations, courses: contextCourses } = useData();
   const { isAdmin } = useAuth();
   
   const [selectedCourse, setSelectedCourse] = useState<string>('semua');
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fitur Select Multiple
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Gabungkan semua `courses` yang ada di database dengan `courses` bawaan (agar mapel yang baru di-upload tetap tampil)
+  const allAvailableCourses = Array.from(new Set([
+    ...contextCourses,
+    ...presentations.map(p => p.course)
+  ])).sort();
 
   const filteredPresentations = selectedCourse === 'semua' 
     ? presentations 
@@ -31,7 +41,37 @@ export function Presentation() {
   const handleDelete = async (id: string) => {
     if (confirm('Apakah Anda yakin ingin menghapus jadwal ini?')) {
       await deletePresentation(id);
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    if (confirm(`Apakah Anda yakin ingin menghapus ${selectedIds.size} jadwal yang dipilih?`)) {
+      await deletePresentations(Array.from(selectedIds));
+      setSelectedIds(new Set());
+    }
+  };
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedIds(new Set(filteredPresentations.map(p => p.id)));
+    } else {
+      setSelectedIds(new Set());
+    }
+  };
+
+  const handleSelectRow = (id: string, checked: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   };
 
   // ── FITUR DOWNLOAD TEMPLATE EXCEL ──────────────────────────────
@@ -39,7 +79,7 @@ export function Presentation() {
     const ws = utils.json_to_sheet([{
       "Tanggal (YYYY-MM-DD)": "2024-05-10",
       "Jam (HH:MM)": "08:00",
-      "Mata Kuliah": courses[0] || "Pendidikan Agama Islam",
+      "Mata Kuliah": allAvailableCourses[0] || "Pendidikan Agama Islam",
       "Pertemuan Ke-": "1",
       "Nama Kelompok": "Kelompok 1",
       "Anggota (Pisahkan koma)": "Ahmad, Budi, Siti"
@@ -68,41 +108,78 @@ export function Presentation() {
         const rawData = new Uint8Array(evt.target?.result as ArrayBuffer);
         const wb = read(rawData, { type: 'array' });
         const ws = wb.Sheets[wb.SheetNames[0]];
+        // Menggunakan default json parser agar cell data Excel Date dibaca as-is (sebagai Serial Number atau string biasa)
         const data = utils.sheet_to_json<any>(ws);
 
         const presentationsToAdd: Omit<PresentationType, 'id'>[] = data.map(row => {
-          const dateStr = row["Tanggal (YYYY-MM-DD)"] || row["Tanggal"];
-          const timeStr = row["Jam (HH:MM)"] || row["Jam"] || "08:00";
+          const dateVal = row["Tanggal (YYYY-MM-DD)"] || row["Tanggal"];
+          const timeVal = row["Jam (HH:MM)"] || row["Jam"] || "08:00";
           
-          // Construct ISO format YYYY-MM-DDTHH:mm:00+07:00
-          // Catatan: Jika tidak ada validasi, akan fallback ke date saat ini jika salah input
-          const dateTimeStr = `${dateStr}T${timeStr}:00+07:00`;
-          const validDate = isNaN(Date.parse(dateTimeStr)) ? new Date().toISOString() : new Date(dateTimeStr).toISOString();
+          let y = 0, m = 0, d = 0;
+          let hh = 8, mm = 0;
+
+          // Parsing Tanggal (Nomor Seri Excel VS String Manual)
+          if (typeof dateVal === 'number') {
+            const excelEpoch = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
+            y = excelEpoch.getUTCFullYear();
+            m = excelEpoch.getUTCMonth();
+            d = excelEpoch.getUTCDate();
+          } else if (typeof dateVal === 'string') {
+            const dt = new Date(dateVal);
+            if (!isNaN(dt.getTime())) {
+              y = dt.getFullYear(); m = dt.getMonth(); d = dt.getDate();
+            }
+          }
+
+          // Parsing Jam (Fraksi Hari Excel VS String Manual '08:00')
+          if (typeof timeVal === 'number') {
+            const totalMins = Math.round(timeVal * 24 * 60);
+            hh = Math.floor(totalMins / 60);
+            mm = totalMins % 60;
+          } else if (typeof timeVal === 'string') {
+            const parts = timeVal.split(':');
+            if (parts.length >= 2) {
+              hh = parseInt(parts[0], 10) || 8;
+              mm = parseInt(parts[1], 10) || 0;
+            }
+          }
+
+          // Fallback jika sama sekali tidak dapat tahun
+          if (y === 0) {
+            const now = new Date();
+            y = now.getFullYear(); m = now.getMonth(); d = now.getDate();
+          }
+
+          const parsedDate = new Date(y, m, d, hh, mm, 0);
 
           const pertemuan = row["Pertemuan Ke-"] || row["Pertemuan"];
           const kelompok = row["Nama Kelompok"] || row["Kelompok"];
-          const groupName = pertemuan ? `Pertemuan ${pertemuan} - ${kelompok}` : (kelompok || "Kelompok ?");
+          // Jika kosong, jadikan string default
+          const groupNameRaw = (kelompok || "Tanpa Kelompok").toString();
+          const groupName = pertemuan ? `Pertemuan ${pertemuan} - ${groupNameRaw}` : groupNameRaw;
 
-          const membersRaw = row["Anggota (Pisahkan koma)"] || row["Anggota"] || "";
+          const membersRaw = (row["Anggota (Pisahkan koma)"] || row["Anggota"] || "").toString();
           const members = membersRaw.split(',').map((s: string) => s.trim()).filter(Boolean);
 
+          const courseName = (row["Mata Kuliah"] || allAvailableCourses[0] || "Mata Kuliah Tidak Diketahui").toString();
+
           return {
-            date: validDate,
-            course: row["Mata Kuliah"] || courses[0],
+            date: parsedDate.toISOString(),
+            course: courseName,
             groupName: groupName,
             members: members,
-            status: 'Belum'
+            status: 'Belum' as const
           };
         });
 
         if (presentationsToAdd.length > 0) {
           await addPresentations(presentationsToAdd);
-          alert(`Berhasil mengimpor ${presentationsToAdd.length} jadwal presentasi!`);
+          alert(`Berhasil mengimpor ${presentationsToAdd.length} jadwal presentasi! Mapel baru akan otomatis masuk ke filter (Pilih Mata Kuliah).`);
         } else {
           alert('Data excel kosong atau tidak sesuai template.');
         }
       } catch (error) {
-        console.error(error);
+        console.error("Upload error:", error);
         alert('Terjadi kesalahan saat membaca file Excel.');
       } finally {
         setIsUploading(false);
@@ -145,6 +222,8 @@ END:VCALENDAR`;
     link.click();
     document.body.removeChild(link);
   };
+
+  const isAllSelected = filteredPresentations.length > 0 && selectedIds.size === filteredPresentations.length;
 
   return (
     <div className="space-y-6">
@@ -191,11 +270,24 @@ END:VCALENDAR`;
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="semua">Semua Mata Kuliah</SelectItem>
-            {courses.map(course => (
+            {allAvailableCourses.map(course => (
               <SelectItem key={course} value={course}>{course}</SelectItem>
             ))}
           </SelectContent>
         </Select>
+
+        {/* Action Panel jika ada row yang difilter dan ada yang diselect (Hanya Admin) */}
+        {isAdmin && selectedIds.size > 0 && (
+          <Button 
+            variant="destructive" 
+            size="sm" 
+            className="ml-auto flex animate-in slide-in-from-right-4"
+            onClick={handleDeleteSelected}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Hapus {selectedIds.size} Terpilih
+          </Button>
+        )}
       </div>
 
       {/* Presentations Table */}
@@ -216,6 +308,15 @@ END:VCALENDAR`;
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {isAdmin && (
+                      <TableHead className="w-[50px] text-center">
+                        <Checkbox 
+                          checked={isAllSelected}
+                          onCheckedChange={(checked) => handleSelectAll(!!checked)}
+                          aria-label="Pilih semua"
+                        />
+                      </TableHead>
+                    )}
                     <TableHead>Waktu</TableHead>
                     <TableHead>Mata Kuliah</TableHead>
                     <TableHead>Info Kelompok</TableHead>
@@ -229,6 +330,15 @@ END:VCALENDAR`;
                     const dt = new Date(presentation.date);
                     return (
                     <TableRow key={presentation.id}>
+                      {isAdmin && (
+                        <TableCell className="text-center">
+                          <Checkbox
+                            checked={selectedIds.has(presentation.id)}
+                            onCheckedChange={(checked) => handleSelectRow(presentation.id, !!checked)}
+                            aria-label={`Pilih jadwal ${presentation.course}`}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell className="font-medium whitespace-nowrap">
                         {dt.toLocaleDateString('id-ID', {
                           day: 'numeric',
